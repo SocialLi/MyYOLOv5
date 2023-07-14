@@ -1,5 +1,3 @@
-from pathlib import Path
+a = [3, 4, 5]
 
-cfg = 'datas/yolov5l.yaml'
-name = Path(cfg).name
-print(name)
+print(a.append([5, 6]))

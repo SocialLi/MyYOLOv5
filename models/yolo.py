@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from models.common import *
 from copy import deepcopy
+from utils.general import make_divisible
 
 
 class Detect(nn.Module):
@@ -25,7 +26,36 @@ class Detect(nn.Module):
         self.inplace = inplace  # use inplace ops (e.g. slice assignment)
 
     def forward(self, x):
-        pass
+        z = []  # inference output
+        for i in range(self.nl):
+            x[i] = self.m[i](x[i])  # conv
+            bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
+            x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2)
+
+            if not self.training:  # inference
+                if self.dynamic or self.grid[i].shape[2:4] != x[i].shape[2:4]:
+                    self.grid[i], self.anchor_grid[i] = self._make_grid(nx, ny, i)
+
+                # todo if isinstance(self, Segment):  # (boxes + masks)
+
+                # Detect (boxes only)
+                xy, wh, conf = x[i].sigmoid().split((2, 2, self.nc + 1), 4)
+                xy = (xy * 2 + self.grid[i]) * self.stride[i]  # xy
+                wh = (wh * 2) ** 2 * self.anchor_grid[i]  # wh
+                y = torch.cat((xy, wh, conf), 4)
+                z.append(y.view(bs, self.na * nx * ny, self.no))
+
+        return x if self.training else (torch.cat(z, 1),) if self.export else (torch.cat(z, 1), x)
+
+    def _make_grid(self, nx=20, ny=20, i=0):
+        d = self.anchors[i].device
+        t = self.anchors[i].dtype
+        shape = 1, self.na, ny, nx, 2  # grid shape
+        y, x = torch.arange(ny, device=d, dtype=t), torch.arange(nx, device=d, dtype=t)
+        yv, xv = torch.meshgrid(y, x, indexing='ij')
+        grid = torch.stack((xv, yv), 2).expand(shape) - 0.5  # add grid offset, i.e. y=2.0 * x - 0.5
+        anchor_grid = (self.anchors[i] * self.stride[i]).view((1, self.na, 1, 1, 2)).expand(shape)
+        return grid, anchor_grid
 
 
 class BaseModel(nn.Module):
@@ -55,6 +85,7 @@ class DetectionModel(BaseModel):
         self.model = parse_model(deepcopy(self.yaml), ch=[ch])
 
 
+# ch默认 [3]
 def parse_model(d, ch):  # model_dict, input_channels(3)
     # parse a YOLOv5 model.yaml dictionary
     anchors, nc, gd, gw, act = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple'], d.get('activation')
@@ -72,7 +103,20 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
 
         n = n_ = max(round(n * gd), 1) if n > 1 else n  # depth gain
         if m in {Conv, Bottleneck, SPP, SPPF, BottleneckCSP, C3}:
-            pass
-            # c1, c2 =
+            c1, c2 = ch[f], args[0]
+            if c2 != no:  # if not output
+                c2 = make_divisible(c2 * gw, 8)
+
+            args = [c1, c2, *args[1:]]
+            if m in {BottleneckCSP, C3}:
+                args.insert(2, n)  # number of repeats
+                n = 1
+        elif m is nn.BatchNorm2d:
+            args = [ch[f]]
+        elif m is Concat:
+            c2 = sum(ch[x] for x in f)
+        elif m in {Detect}:
+            args.append([ch[x] for x in f])
+            if isinstance(args[1], int)
 
     return None

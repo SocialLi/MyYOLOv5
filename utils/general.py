@@ -1,10 +1,13 @@
 import inspect
 import logging
 import logging.config
+import math
 import os
 import platform
 from typing import Optional
 from pathlib import Path
+
+import torch
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[1]  # YOLOv5 root directory
@@ -40,6 +43,7 @@ if platform.system() == 'Windows':
     for fn in LOGGER.info, LOGGER.warning:
         setattr(LOGGER, fn.__name__, lambda x: fn())
 
+
 def print_args(args: Optional[dict] = None, show_file=True, show_func=False):
     # Print function arguments (optional args dict)
     x = inspect.currentframe().f_back  # previous frame
@@ -53,3 +57,10 @@ def print_args(args: Optional[dict] = None, show_file=True, show_func=False):
         file = Path(file).stem
     s = (f'{file}: ' if show_file else '') + (f'{func}: ' if show_func else '')
     LOGGER.info(colorstr(s) + ', '.join(f'{k}={v}' for k, v in args.items()))
+
+
+def make_divisible(x, divisor):
+    # Returns nearest x divisible by divisor
+    if isinstance(divisor, torch.Tensor):
+        divisor = int(divisor.max())  # to int
+    return math.ceil(x / divisor) * divisor
